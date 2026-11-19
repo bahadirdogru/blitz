@@ -132,8 +132,10 @@ linebender_resource_handle = "0.1"
 peniko = "0.6.0"
 kurbo = "0.13.1"
 wgpu = "30"
-usvg = "0.50.0"
-svgtypes = "0.16.2" # Should match usvg's version
+# 0.45 rather than the latest: krilla (fulgur's PDF writer) depends on usvg
+# 0.45, and one version keeps a second SVG stack out of bdhtml2pdf's binary.
+usvg = "0.45.1"
+svgtypes = "0.15.3" # Should match usvg's version
 
 # Windowing & Input
 raw-window-handle = "0.6.0"
@@ -177,8 +179,11 @@ web-time = "1"
 console_error_panic_hook = "0.1"
 
 # JavaScript engine (Boa)
-boa_engine = "0.22"
-boa_runtime = "0.22"
+# Without default features: Temporal (and the calendar and time zone data it
+# brings) is left out, and so is boa_runtime's fetch, which blitz-vibey-script
+# replaces with its own. Members turn on the features they use.
+boa_engine = { version = "0.22", default-features = false }
+boa_runtime = { version = "0.22", default-features = false }
 boa_gc = "0.22"
 
 # Other dependencies
