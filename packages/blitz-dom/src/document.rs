@@ -430,6 +430,8 @@ impl BaseDocument {
                     .register_fonts(Blob::new(Arc::new(crate::BULLET_FONT) as _), None);
                 font_ctx
             });
+        let mut font_ctx = font_ctx;
+        prime_fallback_families(&mut font_ctx);
         let font_ctx = Arc::new(Mutex::new(font_ctx));
 
         let viewport = config.viewport.unwrap_or_default();
@@ -3869,5 +3871,31 @@ mod change_tracking_tests {
         doc.clear_changes();
         doc.clear_focus();
         assert!(doc.has_changes());
+    }
+}
+
+/// Scripts whose default system fallback families are looked up when a
+/// document is created: the common ones, and Common/Inherited for text such as
+/// digits and punctuation.
+const PRIMED_FALLBACK_SCRIPTS: [[u8; 4]; 8] = [
+    *b"Latn", *b"Zyyy", *b"Zinh", *b"Cyrl", *b"Grek", *b"Arab", *b"Hebr", *b"Hani",
+];
+
+/// Looks up and stores the default fallback families of common scripts.
+///
+/// fontique keeps the system's fallback answer only for (script, locale) pairs
+/// it has locale-specific data for. For any other locale, such as Latin text in
+/// `lang="tr"` or `lang="en"`, the lookup falls back to the script's default
+/// entry, but when that entry is missing the system answer is not stored.
+/// Parley asks for the item's script and then for Han on every text item, so
+/// the collection's one-entry cache misses each time and fontconfig is queried
+/// for every table cell (a 1000-row table took 1.1 s instead of 0.14 s).
+/// Once the default entry exists, those lookups read it; the answer is the same
+/// one the system would give, since an untracked key carries no locale.
+fn prime_fallback_families(font_ctx: &mut FontContext) {
+    for script in PRIMED_FALLBACK_SCRIPTS {
+        let key =
+            parley::fontique::FallbackKey::new(parley::fontique::Script::from_bytes(script), None);
+        let _ = font_ctx.collection.fallback_families(key).count();
     }
 }
