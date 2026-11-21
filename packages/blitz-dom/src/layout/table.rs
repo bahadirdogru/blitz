@@ -227,9 +227,44 @@ impl TableTreeWrapper<'_, '_> {
             style.min_size.width = style_helpers::length(width);
             style.max_size.width = style_helpers::auto();
         }
-        let widths =
-            distribute_auto_table_width(available, &min, &max, &columns, specified.is_some());
-        style.grid_template_columns = widths.into_iter().map(style_helpers::length).collect();
+        // In the collapsing border model a cell's border box takes half of each
+        // border around it, and widths and percentages apply to border boxes
+        // (as in Chromium). The grid lays those borders out as gaps and the
+        // table's border, so distribute over border boxes and take the halves
+        // back off the tracks.
+        let halves: Vec<f32> = if self.ctx.border_collapse == BorderCollapse::Collapse {
+            (0..n)
+                .map(|c| {
+                    let left = if c == 0 { border.left } else { gap };
+                    let right = if c == n - 1 { border.right } else { gap };
+                    (left + right) / 2.0
+                })
+                .collect()
+        } else {
+            vec![0.0; n]
+        };
+        let add =
+            |sizes: &[f32]| -> Vec<f32> { sizes.iter().zip(&halves).map(|(s, h)| s + h).collect() };
+        let columns: Vec<ColumnWidth> = columns
+            .iter()
+            .zip(&halves)
+            .map(|(column, h)| match *column {
+                ColumnWidth::Fixed(f) => ColumnWidth::Fixed(f + h),
+                other => other,
+            })
+            .collect();
+        let widths = distribute_auto_table_width(
+            available + halves.iter().sum::<f32>(),
+            &add(&min),
+            &add(&max),
+            &columns,
+            specified.is_some(),
+        );
+        style.grid_template_columns = widths
+            .into_iter()
+            .zip(&halves)
+            .map(|(w, h)| style_helpers::length((w - h).max(0.0)))
+            .collect();
         Some(style)
     }
 }
