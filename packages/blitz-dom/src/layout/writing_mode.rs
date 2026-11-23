@@ -223,7 +223,10 @@ impl LayoutPassState<'_> {
     /// Convert every `unrounded_layout` (written in the writing mode of the box that placed it) to
     /// physical coordinates and round it into `final_layout`. Mirrors `taffy::round_layout`,
     /// which it replaces: rounding is applied to cumulative physical positions so that adjacent
-    /// boxes never gain gaps or overlaps.
+    /// boxes never gain gaps or overlaps. With [`DocumentConfig::round_layout`] off, the layout
+    /// is only converted to physical coordinates.
+    ///
+    /// [`DocumentConfig::round_layout`]: crate::DocumentConfig::round_layout
     pub(crate) fn physicalise_and_round_layout(&mut self, root: NodeId) {
         let viewport = self.stylist.device().au_viewport_size();
         let viewport = Size {
@@ -258,20 +261,22 @@ impl LayoutPassState<'_> {
             y: parent_pos.y + unrounded.location.y,
         };
         let size = unrounded.size;
+        let round_layout = self.doc.round_layout;
+        let round = |v: f32| if round_layout { v.round() } else { v };
         // As in `taffy::round_layout`: the box's outer edges are rounded in absolute coordinates and
         // every inner edge is rounded relative to them, so adjacent boxes never overlap or gap.
         let rounded_pos = Point {
-            x: pos.x.round(),
-            y: pos.y.round(),
+            x: round(pos.x),
+            y: round(pos.y),
         };
         let rounded_end = Point {
-            x: (pos.x + size.width).round(),
-            y: (pos.y + size.height).round(),
+            x: round(pos.x + size.width),
+            y: round(pos.y + size.height),
         };
-        let from_left = |v: f32| (pos.x + v).round() - rounded_pos.x;
-        let from_top = |v: f32| (pos.y + v).round() - rounded_pos.y;
-        let from_right = |v: f32| rounded_end.x - (pos.x + size.width - v).round();
-        let from_bottom = |v: f32| rounded_end.y - (pos.y + size.height - v).round();
+        let from_left = |v: f32| round(pos.x + v) - rounded_pos.x;
+        let from_top = |v: f32| round(pos.y + v) - rounded_pos.y;
+        let from_right = |v: f32| rounded_end.x - round(pos.x + size.width - v);
+        let from_bottom = |v: f32| rounded_end.y - round(pos.y + size.height - v);
 
         let mut layout = unrounded;
         layout.location = Point {
@@ -282,7 +287,7 @@ impl LayoutPassState<'_> {
             width: rounded_end.x - rounded_pos.x,
             height: rounded_end.y - rounded_pos.y,
         };
-        layout.scrollbar_size = unrounded.scrollbar_size.map(f32::round);
+        layout.scrollbar_size = unrounded.scrollbar_size.map(round);
         layout.border = taffy::Rect {
             left: from_left(unrounded.border.left),
             right: from_right(unrounded.border.right),

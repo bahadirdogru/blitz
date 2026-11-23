@@ -72,6 +72,7 @@ mod rem_after_viewport_change;
 mod render_blocking_stylesheet;
 mod resize_restyle;
 mod rotate_z_axis;
+mod round_layout;
 mod scale_change_overflow;
 mod scoped_query_selector;
 mod scrollbar_drag;

@@ -447,6 +447,8 @@ impl BaseDocument {
 
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
 
+        #[cfg(not(feature = "writing-mode"))]
+        let round_layout = self.round_layout;
         let mut state = LayoutPassState::new(self);
         #[cfg(feature = "writing-mode")]
         let available_space = {
@@ -461,7 +463,11 @@ impl BaseDocument {
         #[cfg(feature = "writing-mode")]
         state.physicalise_and_round_layout(root_element_id);
         #[cfg(not(feature = "writing-mode"))]
-        taffy::round_layout(&mut state, root_element_id);
+        if round_layout {
+            taffy::round_layout(&mut state, root_element_id);
+        } else {
+            state.copy_unrounded_layout(root_element_id);
+        }
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)

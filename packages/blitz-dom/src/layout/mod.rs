@@ -851,6 +851,28 @@ impl taffy::LayoutGridContainer for LayoutPassState<'_> {
     }
 }
 
+impl LayoutPassState<'_> {
+    /// Copy every `unrounded_layout` into `final_layout`, visiting nodes as `taffy::round_layout`
+    /// does. Used instead of it when [`DocumentConfig::round_layout`] is off.
+    ///
+    /// [`DocumentConfig::round_layout`]: crate::DocumentConfig::round_layout
+    #[cfg(not(feature = "writing-mode"))]
+    pub(crate) fn copy_unrounded_layout(&mut self, node_id: NodeId) {
+        let layout = self.get_unrounded_layout(node_id);
+        self.set_final_layout(node_id, &layout);
+        for index in 0..self.child_count(node_id) {
+            let child = self.get_child_id(node_id, index);
+            if !self.is_out_of_flow(child) {
+                self.copy_unrounded_layout(child);
+            }
+        }
+        for index in 0..self.hoisted_child_count(node_id) {
+            let child = self.get_hoisted_child_id(node_id, index);
+            self.copy_unrounded_layout(child);
+        }
+    }
+}
+
 impl RoundTree for LayoutPassState<'_> {
     fn get_unrounded_layout(&self, node_id: NodeId) -> Layout {
         *self.node_from_id(node_id).unrounded_layout()
