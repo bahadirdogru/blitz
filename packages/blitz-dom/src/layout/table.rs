@@ -487,6 +487,12 @@ pub struct TableContext {
     pub rows: Vec<TableRow>,
     pub columns: Vec<TableColumn>,
     pub computed_grid_info: AtomicRefCell<Option<DetailedGridInfo<Atom>>>,
+    /// In the collapsing border model, the width of each horizontal line of the grid, from
+    /// the table's top edge (`[0]`) to its bottom edge (`[rows.len()]`): the widest top or
+    /// bottom border of the cells that meet the line. The lines between rows are laid out
+    /// as fixed-size row tracks between the rows' tracks, so the grid's rows alternate
+    /// row, line, row, … Empty in the separated borders model.
+    pub row_lines: Vec<f32>,
     pub border_style: Option<ServoArc<Border>>,
     pub border_collapse: BorderCollapse,
     /// Whether the table uses the fixed table layout algorithm
@@ -513,6 +519,8 @@ pub struct TableCell {
     pub column: u16,
     /// The number of columns the cell spans
     pub colspan: u16,
+    /// The number of rows the cell spans
+    pub rowspan: u16,
     /// The cell's specified width (border-box lengths and percentages)
     pub width: ColumnWidth,
     style: taffy::Style<Atom>,
@@ -813,6 +821,58 @@ pub(crate) fn build_table_context(
         })
         .collect();
 
+    // In the collapsing border model each line between two rows takes the widest border
+    // of the cells meeting it (as in Chromium), so rows whose cells have no borders do not
+    // get the width of a border elsewhere in the table between them. The grid has one gap
+    // per axis, so the lines become fixed-size tracks between the rows' tracks.
+    let row_lines: Vec<f32> = if border_collapse == BorderCollapse::Collapse {
+        let mut lines = vec![0.0f32; rows.len() + 1];
+        for cell in &cells {
+            let Some(styles) = doc.nodes[cell.node_id].primary_styles() else {
+                continue;
+            };
+            let border = styles.get_border();
+            let top = cell.row as usize;
+            let bottom = (top + cell.rowspan as usize).min(rows.len());
+            lines[top] = lines[top].max(side_width(
+                border.border_top_width.0,
+                border.border_top_style,
+            ));
+            lines[bottom] = lines[bottom].max(side_width(
+                border.border_bottom_width.0,
+                border.border_bottom_style,
+            ));
+        }
+        let tracks = std::mem::take(&mut style.grid_template_rows);
+        let count = tracks.len();
+        for (index, track) in tracks.into_iter().enumerate() {
+            style.grid_template_rows.push(track);
+            if index + 1 < count {
+                let width = lines[index + 1];
+                style.grid_template_rows.push(
+                    style_helpers::minmax::<TrackSizingFunction>(
+                        style_helpers::length(width),
+                        style_helpers::length(width),
+                    )
+                    .into(),
+                );
+            }
+        }
+        for cell in &mut cells {
+            // Rows that a rowspan reaches past the last row add no lines.
+            let rowspan = cell
+                .rowspan
+                .min(rows.len().saturating_sub(cell.row as usize) as u16);
+            cell.style.grid_row = taffy::Line {
+                start: style_helpers::line(2 * cell.row as i16 + 1),
+                end: style_helpers::span((2 * rowspan).saturating_sub(1).max(1)),
+            };
+        }
+        lines
+    } else {
+        Vec::new()
+    };
+
     style.gap = match border_collapse {
         BorderCollapse::Separate => {
             // In the separated borders model, `border-spacing` also applies between
@@ -831,11 +891,12 @@ pub(crate) fn build_table_context(
                 height: style_helpers::length(spacing_y),
             }
         }
-        // The grid has one gap per axis, so every collapsed border takes the widest cell
-        // border (a border between two cells resolves to the wider one, so a cell
-        // without borders next to cells with borders does not narrow the lines).
+        // The grid has one gap per axis, so every collapsed vertical border takes the widest
+        // cell border (a border between two cells resolves to the wider one, so a cell
+        // without borders next to cells with borders does not narrow the lines). The
+        // horizontal lines are row tracks of their own (`row_lines`), so the row gap is 0.
         BorderCollapse::Collapse => {
-            let (mut x, mut y) = (0.0f32, 0.0f32);
+            let mut x = 0.0f32;
             for cell in &cells {
                 let Some(styles) = doc.nodes[cell.node_id].primary_styles() else {
                     continue;
@@ -850,19 +911,10 @@ pub(crate) fn build_table_context(
                         border.border_right_width.0,
                         border.border_right_style,
                     ));
-                y = y
-                    .max(side_width(
-                        border.border_top_width.0,
-                        border.border_top_style,
-                    ))
-                    .max(side_width(
-                        border.border_bottom_width.0,
-                        border.border_bottom_style,
-                    ));
             }
             taffy::Size {
                 width: style_helpers::length(x),
-                height: style_helpers::length(y),
+                height: style_helpers::length(0.0),
             }
         }
     };
@@ -878,8 +930,8 @@ pub(crate) fn build_table_context(
         style.border = taffy::Rect {
             left: style_helpers::length(own.left.max(gap.width)),
             right: style_helpers::length(own.right.max(gap.width)),
-            top: style_helpers::length(own.top.max(gap.height)),
-            bottom: style_helpers::length(own.bottom.max(gap.height)),
+            top: style_helpers::length(own.top.max(row_lines.first().copied().unwrap_or(0.0))),
+            bottom: style_helpers::length(own.bottom.max(row_lines.last().copied().unwrap_or(0.0))),
         };
     }
 
@@ -899,6 +951,7 @@ pub(crate) fn build_table_context(
             rows,
             columns,
             computed_grid_info: AtomicRefCell::new(None),
+            row_lines,
             border_collapse,
             border_style: first_cell_border,
             is_fixed,
@@ -1222,6 +1275,7 @@ fn collect_table_cells(
                 row: row.saturating_sub(1),
                 column: col,
                 colspan: colspan.max(1),
+                rowspan: rowspan.max(1),
                 width,
                 style,
             });
